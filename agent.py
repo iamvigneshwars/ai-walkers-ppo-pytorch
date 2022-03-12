@@ -175,7 +175,7 @@ class Agent:
 if __name__ == "__main__":
 
     parser = argparse.ArgumentParser()
-    parser.add_argument("--env", help = "OpenAI gym environment", default = "HumanoidPyBulletEnv-v0", type = str)
+    parser.add_argument("--env", help = "OpenAI gym environment", default = "HalfCheetahPyBulletEnv-v0", type = str)
     parser.add_argument("--learn", help = "Agent starts to learn",  action= 'store_true')
     parser.add_argument("--play", help = "Agent starts to play", action= 'store_true')
     parser.add_argument("-n_workers", help = "Number of environments", default = 8, type = int)
