@@ -135,13 +135,13 @@ class Agent:
                 test_reward = np.mean([self.play(env, model) for _ in range(10)])
                 self.writer.add_scalar('test_rewards', test_reward, frame_idx)
                 print('Frame %s. reward : %s ' % (frame_idx, test_reward))
-                if best_reward is None or best_reward <= test_reward:
-                    if best_reward is not None:
-                        print("Best reward updated : %.3f -> %.3f" % (best_reward, test_reward))
-                        name = "%s_best_%+.3f_%d.pth" %(self.env_id, test_reward, frame_idx)
-                        fname = os.path.join('.', 'checkpoints', name)
-                        torch.save(model.state_dict(), fname)
-                    best_reward = test_reward
+                # if best_reward is None or best_reward <= test_reward:
+                #     if best_reward is not None:
+                #         print("Best reward updated : %.3f -> %.3f" % (best_reward, test_reward))
+                #         name = "%s_best_%+.3f_%d.pth" %(self.env_id, test_reward, frame_idx)
+                #         fname = os.path.join('.', 'checkpoints', name)
+                #         torch.save(model.state_dict(), fname)
+                #     best_reward = test_reward
             
     
     def play(self,env = None, model = None, human = False):
