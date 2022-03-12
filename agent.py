@@ -18,12 +18,6 @@ class Agent:
         self.env_id = environment
         self.device = device
         self.writer = SummaryWriter()
-        self.log_probs = []
-        self.values = []
-        self.states = []
-        self.actions = []
-        self.rewards = []
-        self.masks = []
 
     def make_env(self):
         def thunk():
@@ -31,15 +25,15 @@ class Agent:
             return env
         return thunk
 
-    def calculate_gae(self,next_value,gamma, lmda):
-        values =  self.values + [next_value]
-        gae= 0
+    def calculate_gae(self, next_value, rewards, masks, values,gamma = 0.99,lmda = 0.95 ):
+        values = values + [next_value]
+        gae = 0
         returns = []
-        for step in reversed(range(len(self.rewards))):
-            delta = self.rewards[step] + gamma * values[step + 1] * self.masks[step] - values[step]
-            gae = delta + gamma * lmda * self.masks[step] * gae
-            returns.append(gae + values[step])
-        return list(reversed(returns))
+        for step in reversed(range(len(rewards))):
+            delta = rewards[step] + gamma * values[step + 1] * masks[step] - values[step]
+            gae = delta + gamma * lmda * masks[step] * gae
+            returns.insert(0, gae + values[step])
+        return returns
 
     def normalize(self, x):
         x -= x.mean()
@@ -48,12 +42,11 @@ class Agent:
 
     def sample_batch(self, states, actions, log_probs, returns, advantages):
         batch_size = states.size(0)
-
+        print(batch_size)
         for _ in range(batch_size // args.mini_batch):
             rand_ids = np.random.randint(0, batch_size , args.mini_batch)
             yield states[rand_ids, :], actions[rand_ids, :],log_probs[rand_ids, :], \
                     returns[rand_ids, :], advantages[rand_ids, :]
-
 
     def learn(self):
         envs = [self.make_env() for i in range(args.n_workers)]
@@ -62,10 +55,10 @@ class Agent:
         num_inputs = env.observation_space.shape[0]
         num_outputs = env.action_space.shape[0]
         model = PPO(num_inputs, num_outputs).to(self.device)
+        optimizer = optim.Adam(model.parameters(), lr = args.lr)
 
         if (args.load):
             model.load_state_dict(torch.load(args.model))
-        optimizer = optim.Adam(model.parameters(), lr = args.lr)
 
         frame_idx = 0
         train_epoch = 0
@@ -75,7 +68,12 @@ class Agent:
         early_stop = False
 
         while not early_stop:
-
+            log_probs = []
+            values    = []
+            states    = []
+            actions   = []
+            rewards   = []
+            masks     = []
             for _ in range(args.ppo_steps):
                 state = torch.FloatTensor(state).to(device)
                 dist, value = model(state)
@@ -83,53 +81,64 @@ class Agent:
                 next_state, reward, done, _ = envs.step(action.cpu().numpy())
                 log_prob = dist.log_prob(action)
                 
-                self.log_probs.append(log_prob)
-                self.values.append(value)
-                self.rewards.append(torch.tensor(reward, dtype = torch.float32).unsqueeze(1).to(self.device))
-                self.masks.append(torch.tensor(1 - done).unsqueeze(1).to(self.device))
-                self.states.append(state)
-                self.actions.append(action)
+                log_probs.append(log_prob)
+                values.append(value)
+                rewards.append(torch.tensor(reward, dtype = torch.float32).unsqueeze(1).to(self.device))
+                masks.append(torch.tensor(1 - done).unsqueeze(1).to(self.device))
+                states.append(state)
+                actions.append(action)
 
                 state = next_state
                 frame_idx += 1
 
             next_state = torch.FloatTensor(next_state).to(device)
             _, next_value = model(next_state)
-            returns = self.calculate_gae(next_value, args.gamma, args.lmda)
+            returns = self.calculate_gae(next_value,rewards, masks,values)
 
             returns = torch.cat(returns).detach()
-            log_probs = torch.cat(self.log_probs).detach()
-            values = torch.cat(self.values).detach()
-            states = torch.cat(self.states)
-            actions = torch.cat(self.actions)
+            log_probs = torch.cat(log_probs).detach()
+            values = torch.cat(values).detach()
+            states = torch.cat(states)
+            actions = torch.cat(actions)
             advantage = returns - values
             advantage = self.normalize(advantage)
 
-            for _ in range(args.epochs):
-                for st, actn, old_log_probs, retn, adv in \
-                        self.sample_batch(states, actions, log_probs, returns, advantage):
+            # self.ppo_update(model,optimizer, frame_idx, states, actions, log_probs, returns, advantage) 
+            # for _ in range(args.epochs):
+            #     for st, actn, old_log_probs, retn, adv in \
+            #             self.sample_batch(states, actions, log_probs, returns, advantage):
 
-                    dist, value = model(st)
+            #         dist, value = model(st)
+            #         entropy = dist.entropy().mean()
+            #         new_log_probs = dist.log_prob(actn)
+            #         ratio = (new_log_probs - old_log_probs).exp()
+            #         surr1 = ratio * adv
+            #         surr2 = torch.clamp(ratio, 1.0- args.epsilon, 1.0 + args.epsilon) * adv
+            #         actor_loss = - torch.min(surr1, surr2).mean()
+            #         critic_loss = (retn  - value).pow(2).mean()
+            #         total_loss = args.c1  * critic_loss + actor_loss - args.c2 * entropy
+
+            #         optimizer.zero_grad()
+            #         total_loss.backward()
+            #         optimizer.step()
+            
+            for _ in range(args.epochs):
+                for b_state, b_action, b_log_probs, b_return, b_advantage in self.sample_batch(states, actions, log_probs, returns, advantage):
+                    dist, value = model(b_state)
                     entropy = dist.entropy().mean()
-                    new_log_probs = dist.log_prob(actn)
-                    ratio = (new_log_probs - old_log_probs).exp()
-                    surr1 = ratio * adv
-                    surr2 = torch.clamp(ratio, 1.0- args.epsilon, 1.0 + args.epsilon) * adv
-                    actor_loss = - torch.min(surr1, surr2).mean()
-                    critic_loss = (retn  - value).pow(2).mean()
-                    total_loss = args.c1  * critic_loss + actor_loss - args.c2 * entropy
+                    new_log_probs = dist.log_prob(b_action)
+                    ratio = (new_log_probs - b_log_probs).exp()
+                    p_loss1 = ratio * b_advantage
+                    p_loss2 = torch.clamp(ratio, 1.0 - args.epsilon, 1.0 + args.epsilon) * b_advantage
+                    p_loss = - torch.min(p_loss1, p_loss2).mean()
+                    v_loss = (b_return - value).pow(2).mean()
+                    loss = args.c1 * v_loss + p_loss - args.c2 * entropy
 
                     optimizer.zero_grad()
-                    total_loss.backward()
+                    loss.backward()
                     optimizer.step()
 
             train_epoch += 1
-            self.states.clear()
-            self.actions.clear()
-            self.rewards.clear()
-            self.masks.clear()
-            self.log_probs.clear()
-            self.values.clear()
 
             if train_epoch % args.epochs == 0:
                 test_reward = np.mean([self.play(env, model) for _ in range(10)])
@@ -189,7 +198,7 @@ if __name__ == "__main__":
     parser.add_argument("-ppo_steps", help = "Number of steps before update", default = 256, type = int)
     parser.add_argument("-c1", help = "critic discount", default = 0.5, type = float)
     parser.add_argument("-c2", help = "entropy beta", default = 0.001, type = float)
-    parser.add_argument("-epsilon", help = "entropy beta", default = 0.02, type = float)
+    parser.add_argument("-epsilon", help = "entropy beta", default = 0.2, type = float)
     
     args = parser.parse_args()
     
