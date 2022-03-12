@@ -1,5 +1,5 @@
 import gym
-from gym.wrappers import Monitor
+from gym.wrappers.monitoring.video_recorder import VideoRecorder
 import time
 import os
 import pybulletgym
@@ -11,6 +11,7 @@ from tensorboardX import SummaryWriter
 import numpy as np
 from multiprocessing_env import SubprocVecEnv
 import argparse
+import pybullet_envs as pe
 
 class Agent:
     def __init__(self, environment, device):
@@ -58,7 +59,12 @@ class Agent:
         envs = [self.make_env() for i in range(args.n_workers)]
         envs = SubprocVecEnv(envs)
         env = gym.make(self.env_id)
+        num_inputs = env.observation_space.shape[0]
+        num_outputs = env.action_space.shape[0]
         model = PPO(num_inputs, num_outputs).to(self.device)
+
+        if (args.load):
+            model.load_state_dict(torch.load(args.model))
         optimizer = optim.Adam(model.parameters(), lr = args.lr)
 
         frame_idx = 0
@@ -99,14 +105,6 @@ class Agent:
             advantage = returns - values
             advantage = self.normalize(advantage)
 
-            count_steps = 0
-            sum_returns = 0
-            sum_advantage = 0.0
-            sum_loss_actor = 0.0
-            sum_loss_critic = 0.0
-            sum_entropy = 0.0
-            sum_loss_total = 0.0
-
             for _ in range(args.epochs):
                 for st, actn, old_log_probs, retn, adv in \
                         self.sample_batch(states, actions, log_probs, returns, advantage):
@@ -125,22 +123,6 @@ class Agent:
                     total_loss.backward()
                     optimizer.step()
 
-                    sum_returns += retn.mean()
-                    sum_advantage += adv.mean()
-                    sum_loss_actor += actor_loss
-                    sum_loss_critic += critic_loss
-                    sum_loss_total += total_loss
-                    sum_entropy += entropy
-
-                    count_steps += 1
-
-            self.writer.add_scalar("returns", sum_returns / count_steps, frame_idx)
-            self.writer.add_scalar("advantage", sum_advantage / count_steps, frame_idx)
-            self.writer.add_scalar("loss_actor", sum_loss_actor / count_steps, frame_idx)
-            self.writer.add_scalar("loss_critic", sum_loss_critic / count_steps, frame_idx)
-            self.writer.add_scalar("entropy", sum_entropy / count_steps, frame_idx)
-            self.writer.add_scalar("loss_total", sum_loss_total / count_steps, frame_idx)
-
             train_epoch += 1
             self.states.clear()
             self.actions.clear()
@@ -149,7 +131,7 @@ class Agent:
             self.log_probs.clear()
             self.values.clear()
 
-            if train_epoch % TEST_EPOCHS == 0:
+            if train_epoch % args.epochs == 0:
                 test_reward = np.mean([self.play(env, model) for _ in range(10)])
                 self.writer.add_scalar('test_rewards', test_reward, frame_idx)
                 print('Frame %s. reward : %s ' % (frame_idx, test_reward))
@@ -165,22 +147,20 @@ class Agent:
     def play(self,env = None, model = None, human = False):
 
         if not env:
-            env = Monitor(gym.make(self.env_id), './video', force = True)
+            env = gym.make(self.env_id)
+            env = gym.wrappers.Monitor(env, './', force = True)
 
         if not model:
             model = PPO(env.observation_space.shape[0], env.action_space.shape[0]).to(self.device)
             model.load_state_dict(torch.load(args.model))
         
         if human:
-            env.render('human')
+            env.render()
 
         state = env.reset()
         done= False
         total_reward = 0
-
-        # while not done:
-        for _ in range(10000):
-            time.sleep(0.01)
+        while not done:
             state = torch.FloatTensor(state).unsqueeze(0).to(device)
             dist, _ = model(state)
             action = dist.sample().cpu().numpy()[0]
@@ -195,7 +175,7 @@ class Agent:
 if __name__ == "__main__":
 
     parser = argparse.ArgumentParser()
-    parser.add_argument("--env", help = "OpenAI gym environment", default = "HalfCheetahPyBulletEnv-v0", type = str)
+    parser.add_argument("--env", help = "OpenAI gym environment", default = "HumanoidPyBulletEnv-v0", type = str)
     parser.add_argument("--learn", help = "Agent starts to learn",  action= 'store_true')
     parser.add_argument("--play", help = "Agent starts to play", action= 'store_true')
     parser.add_argument("-n_workers", help = "Number of environments", default = 8, type = int)
@@ -205,6 +185,7 @@ if __name__ == "__main__":
     parser.add_argument("-lmda", help = "gae lambda", default = 0.95, type = float)
     parser.add_argument("-epochs", help = "number of updates", default = 10, type = int)
     parser.add_argument("-model", help = "pretrained model", type = str)
+    parser.add_argument("-load", help = "load checkpoint", action = 'store_true')
     parser.add_argument("-ppo_steps", help = "Number of steps before update", default = 256, type = int)
     parser.add_argument("-c1", help = "critic discount", default = 0.5, type = float)
     parser.add_argument("-c2", help = "entropy beta", default = 0.001, type = float)
@@ -219,4 +200,3 @@ if __name__ == "__main__":
         agent.learn()
     if (args.play):
         agent.play(human = True)
-    
