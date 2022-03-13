@@ -164,6 +164,7 @@ class Agent:
         while not done:
             state = torch.FloatTensor(state).unsqueeze(0).to(device)
             dist, _ = model(state)
+            # action = dist.sample().cpu().numpy()[0]
             action = dist.sample().cpu().numpy()[0]
             next_state, reward, done, _ = env.step(action)
             state = next_state
