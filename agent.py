@@ -137,7 +137,6 @@ class Agent:
             train_epoch +=1
 
             if train_epoch % args.epochs == 0:
-                print(train_epoch)
                 test_reward = np.mean([self.play(env, model) for _ in range(10)])
                 print('Frame %s. reward: %s' % (frame_idx, test_reward))
                 # Save a checkpoint every time we achieve a best reward
@@ -163,7 +162,8 @@ class Agent:
             state = torch.FloatTensor(state).unsqueeze(0).to(device)
             with torch.no_grad():
                 dist, _ = model(state)
-            action = dist.sample().cpu().numpy()[0]
+            # action = dist.sample().cpu().numpy()[0]
+            action = dist.mean.detach().cpu().numpy()[0]
             next_state, reward, done, _ = env.step(action)
             state = next_state
             total_reward += reward
