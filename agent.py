@@ -17,7 +17,7 @@ class Agent:
     def __init__(self, environment, device):
         self.env_id = environment
         self.device = device
-        self.writer = SummaryWriter()
+        self.writer = SummaryWriter(f"runs/{run_name}")
 
     def make_env(self):
         def thunk():
@@ -40,22 +40,8 @@ class Agent:
         x /= (x.std() + 1e-8)
         return x
 
-    # def sample_batch(self, states, actions, log_probs, returns, advantages):
-    #     batch_size = states.size(0)
-    #     print(batch_size)
-    #     for _ in range(batch_size // args.mini_batch):
-    #         rand_ids = np.random.randint(0, batch_size , args.mini_batch)
-    #         yield states[rand_ids, :], actions[rand_ids, :],log_probs[rand_ids, :], \
-    #                 returns[rand_ids, :], advantages[rand_ids, :]
-
-    def sample_batch(self, states, actions, log_probs, returns, advantage):
-        batch_size = states.size(0)
-        # generates random mini-batches until we have covered the full batch
-        for _ in range(batch_size // args.mini_batch):
-            rand_ids = np.random.randint(0, batch_size, args.mini_batch)
-            yield states[rand_ids, :], actions[rand_ids, :], log_probs[rand_ids, :], returns[rand_ids, :], advantage[rand_ids, :]
-
     def learn(self):
+        
         envs = [self.make_env() for i in range(args.n_workers)]
         envs = SubprocVecEnv(envs)
         env = gym.make(self.env_id)
@@ -67,9 +53,8 @@ class Agent:
         if (args.load):
             model.load_state_dict(torch.load(args.model))
 
-        frame_idx  = 0
+        global_steps  = 0
         best_reward = None
-
         state = envs.reset()
         early_stop = False
         train_epoch = 0
@@ -83,14 +68,13 @@ class Agent:
             rewards   = []
             masks     = []
 
-            for _ in range(args.epochs):
+            for _ in range(args.ppo_steps):
                 state = torch.FloatTensor(state).to(self.device)
-                dist, value = model(state)
+                with torch.no_grad():
+                    dist, value = model(state)
 
                 action = dist.sample()
-                # each state, reward, done is a list of results from each parallel environment
-                #next_state, reward, done, _ = env.step(action.cpu().numpy())
-                next_state, reward, done, _ = envs.step(action.cpu().numpy())
+                next_state, reward, done, info = envs.step(action.cpu().numpy())
                 log_prob = dist.log_prob(action)
 
                 log_probs.append(log_prob)
@@ -102,10 +86,18 @@ class Agent:
                 actions.append(action)
 
                 state = next_state
-                frame_idx += 1
+                global_steps += 1
+                
+                for item in info:
+                    if "episode" in item.keys():
+                        print(f"global_step={global_steps}, episodic_return={item['episode']['r']}")
+                        writer.add_scalar("charts/episodic_return", item["episode"]["r"], global_step)
+                        writer.add_scalar("charts/episodic_length", item["episode"]["l"], global_step)
+                        break
                 
             next_state = torch.FloatTensor(next_state).to(self.device)
-            _, next_value = model(next_state)
+            with torch.no_grad():
+                _, next_value = model(next_state)
             returns = self.calculate_gae(next_value, rewards, masks, values)
 
             returns   = torch.cat(returns).detach()
@@ -116,32 +108,58 @@ class Agent:
             advantage = returns - values
             advantage = self.normalize(advantage)
 
-            #ppo_update(frame_idx, states, actions, log_probs, returns, advantage)
-            
-            for _ in range(10):
-                for b_state, b_action, b_log_probs, b_return, b_advantage in self.sample_batch(states, actions, log_probs, returns, advantage):
-                    dist, value = model(b_state)
+            b_inds = np.arange(states.size(0))
+            for _ in range(args.epochs):
+                np.random.shuffle(b_inds)
+                for start in range(0, states.size(0), args.mini_batch):
+                    end = start + args.mini_batch
+                    mb_inds = b_inds[start:end]
+
+                    dist, value = model(states[mb_inds, :])
                     entropy = dist.entropy().mean()
-                    new_log_probs = dist.log_prob(b_action)
-                    ratio = (new_log_probs - b_log_probs).exp()
-                    p_loss1 = ratio * b_advantage
-                    p_loss2 = torch.clamp(ratio, 1.0 - args.epsilon, 1.0 + args.epsilon) * b_advantage
+                    new_log_probs = dist.log_prob(actions[mb_inds, :])
+                    ratio = (new_log_probs - log_probs[mb_inds, :]).exp()
+                    p_loss1 = ratio * advantage[mb_inds, :]
+                    p_loss2 = torch.clamp(ratio, 1.0 - args.epsilon, 1.0 + args.epsilon) * advantage[mb_inds, :]
                     p_loss = - torch.min(p_loss1, p_loss2).mean()
-                    v_loss = (b_return - value).pow(2).mean()
+                    v_loss = (returns[mb_inds, :] - value).pow(2).mean()
                     loss = args.c1 * v_loss + p_loss - args.c2 * entropy
 
                     optimizer.zero_grad()
                     loss.backward()
                     optimizer.step()
 
+            writer.add_scalar("losses/policy_loss", p_loss.item(), global_steps)
+            writer.add_scalar("losses/value_loss", v_loss.item(), global_steps)
+            writer.add_scalar("losses/total", loss.item(), global_steps)
             train_epoch +=1
 
             if train_epoch % args.epochs == 0:
-                test_reward = np.mean([self.play(env, model) for _ in range(10)])
-                print('Frame %s. reward: %s' % (frame_idx, test_reward))
-                # Save a checkpoint every time we achieve a best reward
-                # if test_reward > TARGET_REWARD: early_stop = True  
+                test_reward = np.mean([self.test_env(env, model, device) for _ in range(10)])
+                writer.add_scalar("test_rewards", test_reward, global_steps)
+                print('Frame %s. reward: %s' % (global_steps, test_reward))
+                if best_reward is None or best_reward < test_reward:
+                    if best_reward is not None:
+                        print("Best reward updated: %.3f -> %.3f" % (best_reward, test_reward))
+                        name = "%s_best_%+.3f_%d.pth" % (args.name, test_reward, global_steps)
+                        fname = os.path.join('.', 'checkpoints', name)
+                        torch.save(model.state_dict(), fname)
+                    best_reward = test_reward
+                if test_reward > TARGET_REWARD: early_stop = True
     
+    def test_env(self, env, model, device, deterministic=True):
+        state = env.reset()
+        done = False
+        total_reward = 0
+        while not done:
+            state = torch.FloatTensor(state).unsqueeze(0).to(device)
+            dist, _ = model(state)
+            action = dist.mean.detach().cpu().numpy()[0] if deterministic \
+                else dist.sample().cpu().numpy()[0]
+            next_state, reward, done, _ = env.step(action)
+            state = next_state
+            total_reward += reward
+        return total_reward
     def play(self,env = None, model = None, human = False):
 
         if not env:
@@ -175,6 +193,7 @@ class Agent:
 if __name__ == "__main__":
 
     parser = argparse.ArgumentParser()
+    parser.add_argument("--exp-name", help = "Name of the experiment",type=str, default = "PPO" )
     parser.add_argument("--env", help = "OpenAI gym environment", default = "HalfCheetahPyBulletEnv-v0", type = str)
     parser.add_argument("--learn", help = "Agent starts to learn",  action= 'store_true')
     parser.add_argument("--play", help = "Agent starts to play", action= 'store_true')
