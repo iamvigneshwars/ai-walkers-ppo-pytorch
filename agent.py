@@ -132,6 +132,7 @@ class Agent:
             self.values.clear()
 
             if train_epoch % args.epochs == 0:
+                print(train_epoch)
                 test_reward = np.mean([self.play(env, model) for _ in range(10)])
                 self.writer.add_scalar('test_rewards', test_reward, frame_idx)
                 print('Frame %s. reward : %s ' % (frame_idx, test_reward))
