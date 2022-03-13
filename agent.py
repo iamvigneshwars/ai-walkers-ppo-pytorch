@@ -136,7 +136,7 @@ class Agent:
             train_epoch +=1
 
             if train_epoch % args.epochs == 0:
-                test_reward = np.mean([self.play(env, model, device) for _ in range(10)])
+                test_reward = np.mean([self.play(env, model) for _ in range(10)])
                 self.writer.add_scalar("test_rewards", test_reward, global_steps)
                 print('Frame %s. reward: %s' % (global_steps, test_reward))
                 if best_reward is None or best_reward < test_reward:
@@ -166,7 +166,7 @@ class Agent:
 
         if not env:
             env = gym.make(self.env_id)
-            env = gym.wrappers.Monitor(env, "./videos")
+            env = gym.wrappers.Monitor(env, "./videos", force = True)
 
         if not model:
             model = PPO(env.observation_space.shape[0], env.action_space.shape[0]).to(self.device)
