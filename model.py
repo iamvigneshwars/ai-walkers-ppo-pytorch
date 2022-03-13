@@ -10,12 +10,16 @@ class PPO(nn.Module):
         self.critic = nn.Sequential(
             nn.Linear(num_inputs, 256),
             nn.ReLU(),
+            # nn.Linear(256, 256),
+            # nn.ReLU(),
             nn.Linear(256, 1)
         )
 
         self.actor = nn.Sequential(
             nn.Linear(num_inputs, 256),
             nn.ReLU(),
+            # nn.Linear(256, 256),
+            # nn.ReLU(),
             nn.Linear(256, num_outputs),
         )
         self.std = nn.Parameter(torch.ones(1, num_outputs) * std)

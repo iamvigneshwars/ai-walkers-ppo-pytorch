@@ -165,15 +165,15 @@ class Agent:
     def play(self,env = None, model = None, human = False):
 
         if not env:
-            env = gym.make(self.env_id)
+            env = gym.make(self.env_id, render = True)
             env = gym.wrappers.Monitor(env, "./videos", force = True)
 
         if not model:
             model = PPO(env.observation_space.shape[0], env.action_space.shape[0]).to(self.device)
             model.load_state_dict(torch.load(args.model))
         
-        if human:
-            env.render()
+        # if human:
+            # env.render()
 
         state = env.reset()
         done= False
