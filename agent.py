@@ -40,89 +40,88 @@ class Agent:
         x /= (x.std() + 1e-8)
         return x
 
-    def sample_batch(self, states, actions, log_probs, returns, advantages):
+    # def sample_batch(self, states, actions, log_probs, returns, advantages):
+    #     batch_size = states.size(0)
+    #     print(batch_size)
+    #     for _ in range(batch_size // args.mini_batch):
+    #         rand_ids = np.random.randint(0, batch_size , args.mini_batch)
+    #         yield states[rand_ids, :], actions[rand_ids, :],log_probs[rand_ids, :], \
+    #                 returns[rand_ids, :], advantages[rand_ids, :]
+
+    def sample_batch(self, states, actions, log_probs, returns, advantage):
         batch_size = states.size(0)
-        print(batch_size)
+        # generates random mini-batches until we have covered the full batch
         for _ in range(batch_size // args.mini_batch):
-            rand_ids = np.random.randint(0, batch_size , args.mini_batch)
-            yield states[rand_ids, :], actions[rand_ids, :],log_probs[rand_ids, :], \
-                    returns[rand_ids, :], advantages[rand_ids, :]
+            rand_ids = np.random.randint(0, batch_size, args.mini_batch)
+            yield states[rand_ids, :], actions[rand_ids, :], log_probs[rand_ids, :], returns[rand_ids, :], advantage[rand_ids, :]
 
     def learn(self):
-        envs = [self.make_env() for i in range(args.n_workers)]
-        envs = SubprocVecEnv(envs)
+        # envs = [self.make_env() for i in range(args.n_workers)]
+        # envs = SubprocVecEnv(envs)
         env = gym.make(self.env_id)
-        num_inputs = env.observation_space.shape[0]
-        num_outputs = env.action_space.shape[0]
+        # num_inputs = env.observation_space.shape[0]
+        # num_outputs = env.action_space.shape[0]
+        envs = gym.vector.SyncVectorEnv([self.make_env() for i in range(8)])
+        num_inputs  = envs.observation_space.shape[1]
+        num_outputs = envs.action_space[0].shape[0]
         model = PPO(num_inputs, num_outputs).to(self.device)
         optimizer = optim.Adam(model.parameters(), lr = args.lr)
 
         if (args.load):
             model.load_state_dict(torch.load(args.model))
 
-        frame_idx = 0
-        train_epoch = 0
+        frame_idx  = 0
         best_reward = None
 
         state = envs.reset()
         early_stop = False
+        train_epoch = 0
 
         while not early_stop:
+
             log_probs = []
             values    = []
             states    = []
             actions   = []
             rewards   = []
             masks     = []
-            for _ in range(args.ppo_steps):
-                state = torch.FloatTensor(state).to(device)
+
+            for _ in range(args.epochs):
+                state = torch.FloatTensor(state).to(self.device)
                 dist, value = model(state)
+
                 action = dist.sample()
+                # each state, reward, done is a list of results from each parallel environment
+                #next_state, reward, done, _ = env.step(action.cpu().numpy())
                 next_state, reward, done, _ = envs.step(action.cpu().numpy())
                 log_prob = dist.log_prob(action)
-                
+
                 log_probs.append(log_prob)
                 values.append(value)
-                rewards.append(torch.tensor(reward, dtype = torch.float32).unsqueeze(1).to(self.device))
-                masks.append(torch.tensor(1 - done).unsqueeze(1).to(self.device))
+                rewards.append(torch.tensor(reward, dtype=torch.float32).unsqueeze(1).to(self.device))
+                masks.append(torch.tensor(1 - done, dtype=torch.float32).unsqueeze(1).to(self.device))
+
                 states.append(state)
                 actions.append(action)
 
                 state = next_state
                 frame_idx += 1
-
-            next_state = torch.FloatTensor(next_state).to(device)
+                
+            next_state = torch.FloatTensor(next_state).to(self.device)
             _, next_value = model(next_state)
-            returns = self.calculate_gae(next_value,rewards, masks,values)
+            returns = self.calculate_gae(next_value, rewards, masks, values)
 
-            returns = torch.cat(returns).detach()
+            returns   = torch.cat(returns).detach()
             log_probs = torch.cat(log_probs).detach()
-            values = torch.cat(values).detach()
-            states = torch.cat(states)
-            actions = torch.cat(actions)
+            values    = torch.cat(values).detach()
+            states    = torch.cat(states)
+            actions   = torch.cat(actions)
             advantage = returns - values
             advantage = self.normalize(advantage)
 
-            # self.ppo_update(model,optimizer, frame_idx, states, actions, log_probs, returns, advantage) 
-            # for _ in range(args.epochs):
-            #     for st, actn, old_log_probs, retn, adv in \
-            #             self.sample_batch(states, actions, log_probs, returns, advantage):
-
-            #         dist, value = model(st)
-            #         entropy = dist.entropy().mean()
-            #         new_log_probs = dist.log_prob(actn)
-            #         ratio = (new_log_probs - old_log_probs).exp()
-            #         surr1 = ratio * adv
-            #         surr2 = torch.clamp(ratio, 1.0- args.epsilon, 1.0 + args.epsilon) * adv
-            #         actor_loss = - torch.min(surr1, surr2).mean()
-            #         critic_loss = (retn  - value).pow(2).mean()
-            #         total_loss = args.c1  * critic_loss + actor_loss - args.c2 * entropy
-
-            #         optimizer.zero_grad()
-            #         total_loss.backward()
-            #         optimizer.step()
+            #ppo_update(frame_idx, states, actions, log_probs, returns, advantage)
             
-            for _ in range(args.epochs):
+            for _ in range(10):
                 for b_state, b_action, b_log_probs, b_return, b_advantage in self.sample_batch(states, actions, log_probs, returns, advantage):
                     dist, value = model(b_state)
                     entropy = dist.entropy().mean()
@@ -138,20 +137,39 @@ class Agent:
                     loss.backward()
                     optimizer.step()
 
-            train_epoch += 1
 
-            if train_epoch % args.epochs == 0:
-                test_reward = np.mean([self.play(env, model) for _ in range(10)])
-                self.writer.add_scalar('test_rewards', test_reward, frame_idx)
-                print('Frame %s. reward : %s ' % (frame_idx, test_reward))
-                # if best_reward is None or best_reward <= test_reward:
-                #     if best_reward is not None:
-                #         print("Best reward updated : %.3f -> %.3f" % (best_reward, test_reward))
-                #         name = "%s_best_%+.3f_%d.pth" %(self.env_id, test_reward, frame_idx)
-                #         fname = os.path.join('.', 'checkpoints', name)
-                #         torch.save(model.state_dict(), fname)
-                #     best_reward = test_reward
             
+            """
+            b_inds = np.arange(256)
+            for _ in range(PPO_EPOCHS):
+                np.random.shuffle(b_inds)
+                for start in range(0, 256, 64):
+                    end = start + 64
+                    mb_inds = b_inds[start:end]
+
+                    dist, value = model(states[mb_inds])
+                    entropy = dist.entropy().mean()
+                    new_log_probs = dist.log_prob(actions[mb_inds])
+                    ratio = (new_log_probs - log_probs[mb_inds]).exp()
+                    p_loss1 = ratio * advantage[mb_inds]
+                    p_loss2 = advantage[mb_inds] * torch.clamp(ratio, 1.0 - 0.02, 1.0 + 0.02)
+                    p_loss = - torch.min(p_loss1, p_loss2).mean()
+                    v_loss = (returns[mb_inds] - value).pow(2).mean()
+                    loss = 0.5 * v_loss + p_loss - 0.001 * entropy
+
+                    optimizer.zero_grad()
+                    loss.backward()
+                    optimizer.step()
+
+            """
+            train_epoch +=1
+
+            if train_epoch % 10 == 0:
+                print(train_epoch)
+                test_reward = np.mean([self.play(env, model) for _ in range(10)])
+                print('Frame %s. reward: %s' % (frame_idx, test_reward))
+                # Save a checkpoint every time we achieve a best reward
+                # if test_reward > TARGET_REWARD: early_stop = True  
     
     def play(self,env = None, model = None, human = False):
 
@@ -171,7 +189,8 @@ class Agent:
         total_reward = 0
         while not done:
             state = torch.FloatTensor(state).unsqueeze(0).to(device)
-            dist, _ = model(state)
+            with torch.no_grad():
+                dist, _ = model(state)
             action = dist.sample().cpu().numpy()[0]
             next_state, reward, done, _ = env.step(action)
             state = next_state
