@@ -56,14 +56,11 @@ class Agent:
             yield states[rand_ids, :], actions[rand_ids, :], log_probs[rand_ids, :], returns[rand_ids, :], advantage[rand_ids, :]
 
     def learn(self):
-        # envs = [self.make_env() for i in range(args.n_workers)]
-        # envs = SubprocVecEnv(envs)
+        envs = [self.make_env() for i in range(args.n_workers)]
+        envs = SubprocVecEnv(envs)
         env = gym.make(self.env_id)
-        # num_inputs = env.observation_space.shape[0]
-        # num_outputs = env.action_space.shape[0]
-        envs = gym.vector.SyncVectorEnv([self.make_env() for i in range(8)])
-        num_inputs  = envs.observation_space.shape[1]
-        num_outputs = envs.action_space[0].shape[0]
+        num_inputs = env.observation_space.shape[0]
+        num_outputs = env.action_space.shape[0]
         model = PPO(num_inputs, num_outputs).to(self.device)
         optimizer = optim.Adam(model.parameters(), lr = args.lr)
 
@@ -137,34 +134,9 @@ class Agent:
                     loss.backward()
                     optimizer.step()
 
-
-            
-            """
-            b_inds = np.arange(256)
-            for _ in range(PPO_EPOCHS):
-                np.random.shuffle(b_inds)
-                for start in range(0, 256, 64):
-                    end = start + 64
-                    mb_inds = b_inds[start:end]
-
-                    dist, value = model(states[mb_inds])
-                    entropy = dist.entropy().mean()
-                    new_log_probs = dist.log_prob(actions[mb_inds])
-                    ratio = (new_log_probs - log_probs[mb_inds]).exp()
-                    p_loss1 = ratio * advantage[mb_inds]
-                    p_loss2 = advantage[mb_inds] * torch.clamp(ratio, 1.0 - 0.02, 1.0 + 0.02)
-                    p_loss = - torch.min(p_loss1, p_loss2).mean()
-                    v_loss = (returns[mb_inds] - value).pow(2).mean()
-                    loss = 0.5 * v_loss + p_loss - 0.001 * entropy
-
-                    optimizer.zero_grad()
-                    loss.backward()
-                    optimizer.step()
-
-            """
             train_epoch +=1
 
-            if train_epoch % 10 == 0:
+            if train_epoch % args.epochs == 0:
                 print(train_epoch)
                 test_reward = np.mean([self.play(env, model) for _ in range(10)])
                 print('Frame %s. reward: %s' % (frame_idx, test_reward))
