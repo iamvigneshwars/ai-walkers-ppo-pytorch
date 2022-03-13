@@ -17,7 +17,7 @@ class Agent:
     def __init__(self, environment, device):
         self.env_id = environment
         self.device = device
-        self.writer = SummaryWriter(f"runs/{run_name}")
+        self.writer = SummaryWriter(f"runs/{args.exp}")
 
     def make_env(self):
         def thunk():
@@ -58,6 +58,7 @@ class Agent:
         state = envs.reset()
         early_stop = False
         train_epoch = 0
+        TARGET_REWARD = 2500
 
         while not early_stop:
 
@@ -129,42 +130,43 @@ class Agent:
                     loss.backward()
                     optimizer.step()
 
-            writer.add_scalar("losses/policy_loss", p_loss.item(), global_steps)
-            writer.add_scalar("losses/value_loss", v_loss.item(), global_steps)
-            writer.add_scalar("losses/total", loss.item(), global_steps)
+            self.writer.add_scalar("losses/policy_loss", p_loss.item(), global_steps)
+            self.writer.add_scalar("losses/value_loss", v_loss.item(), global_steps)
+            self.writer.add_scalar("losses/total", loss.item(), global_steps)
             train_epoch +=1
 
             if train_epoch % args.epochs == 0:
-                test_reward = np.mean([self.test_env(env, model, device) for _ in range(10)])
-                writer.add_scalar("test_rewards", test_reward, global_steps)
+                test_reward = np.mean([self.play(env, model, device) for _ in range(10)])
+                self.writer.add_scalar("test_rewards", test_reward, global_steps)
                 print('Frame %s. reward: %s' % (global_steps, test_reward))
                 if best_reward is None or best_reward < test_reward:
                     if best_reward is not None:
                         print("Best reward updated: %.3f -> %.3f" % (best_reward, test_reward))
-                        name = "%s_best_%+.3f_%d.pth" % (args.name, test_reward, global_steps)
+                        name = "%s_score_%+d_%d.pth" % (self.env_id, test_reward, global_steps)
                         fname = os.path.join('.', 'checkpoints', name)
                         torch.save(model.state_dict(), fname)
                     best_reward = test_reward
                 if test_reward > TARGET_REWARD: early_stop = True
     
-    def test_env(self, env, model, device, deterministic=True):
-        state = env.reset()
-        done = False
-        total_reward = 0
-        while not done:
-            state = torch.FloatTensor(state).unsqueeze(0).to(device)
-            dist, _ = model(state)
-            action = dist.mean.detach().cpu().numpy()[0] if deterministic \
-                else dist.sample().cpu().numpy()[0]
-            next_state, reward, done, _ = env.step(action)
-            state = next_state
-            total_reward += reward
-        return total_reward
+    # def test_env(self, env, model, device, deterministic=True):
+    #     state = env.reset()
+    #     done = False
+    #     total_reward = 0
+    #     while not done:
+    #         state = torch.FloatTensor(state).unsqueeze(0).to(device)
+    #         dist, _ = model(state)
+    #         action = dist.mean.detach().cpu().numpy()[0] if deterministic \
+    #             else dist.sample().cpu().numpy()[0]
+    #         next_state, reward, done, _ = env.step(action)
+    #         state = next_state
+    #         total_reward += reward
+    #     return total_reward
+
     def play(self,env = None, model = None, human = False):
 
         if not env:
             env = gym.make(self.env_id)
-            env = gym.wrappers.Monitor(env, './', force = True)
+            env = gym.wrappers.Monitor(env, "./videos")
 
         if not model:
             model = PPO(env.observation_space.shape[0], env.action_space.shape[0]).to(self.device)
@@ -193,7 +195,7 @@ class Agent:
 if __name__ == "__main__":
 
     parser = argparse.ArgumentParser()
-    parser.add_argument("--exp-name", help = "Name of the experiment",type=str, default = "PPO" )
+    parser.add_argument("--exp", help = "Name of the experiment",type=str, default = "PPO" )
     parser.add_argument("--env", help = "OpenAI gym environment", default = "HalfCheetahPyBulletEnv-v0", type = str)
     parser.add_argument("--learn", help = "Agent starts to learn",  action= 'store_true')
     parser.add_argument("--play", help = "Agent starts to play", action= 'store_true')
