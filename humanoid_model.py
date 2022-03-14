@@ -19,6 +19,9 @@ class PPO(nn.Module):
                 nn.ReLU(),
                 nn.Linear(256, 256),
                 nn.ReLU(),
+                # Output dim of critic should be 1.
+                # I had output dim as num_outputs by mistake and trained the 
+                # humanoid walker overnight. But still it works, so if it works I'm not changing it :P.
                 nn.Linear(256, num_outputs)
                 )
 
