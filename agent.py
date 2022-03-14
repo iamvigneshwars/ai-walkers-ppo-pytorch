@@ -9,6 +9,7 @@ from torch.distributions import Normal
 import torch.optim as optim
 from tensorboardX import SummaryWriter
 import numpy as np
+# Downloaded from stable baseline to run the environments in parallel
 from multiprocessing_env import SubprocVecEnv
 import argparse
 import pybullet_envs as pe
@@ -19,12 +20,14 @@ class Agent:
         self.device = device
         self.writer = SummaryWriter(f"runs/{args.exp}")
 
+    # To create multiple environments
     def make_env(self):
         def thunk():
             env = gym.make(self.env_id)
             return env
         return thunk
 
+    # Genaralized advantage estimate
     def calculate_gae(self, next_value, rewards, masks, values,gamma = 0.99,lmda = 0.95 ):
         values = values + [next_value]
         gae = 0
@@ -50,18 +53,20 @@ class Agent:
         model = PPO(num_inputs, num_outputs).to(self.device)
         optimizer = optim.Adam(model.parameters(), lr = args.lr)
 
+        # To continue from previous checkpoint
         if (args.load):
             model.load_state_dict(torch.load(args.model))
 
         global_steps  = 0
+        train_epoch = 0
         best_reward = None
         state = envs.reset()
         early_stop = False
-        train_epoch = 0
-        TARGET_REWARD = 2500
+        TARGET_REWARD = 2000
 
         while not early_stop:
 
+            # Initialize storage
             log_probs = []
             values    = []
             states    = []
@@ -71,6 +76,7 @@ class Agent:
 
             for _ in range(args.ppo_steps):
                 state = torch.FloatTensor(state).to(self.device)
+                # get distibution and V(s)
                 with torch.no_grad():
                     dist, value = model(state)
 
@@ -78,11 +84,12 @@ class Agent:
                 next_state, reward, done, info = envs.step(action.cpu().numpy())
                 log_prob = dist.log_prob(action)
 
+                # Store transitions
                 log_probs.append(log_prob)
                 values.append(value)
                 rewards.append(torch.tensor(reward, dtype=torch.float32).unsqueeze(1).to(self.device))
+                # For terminal states
                 masks.append(torch.tensor(1 - done, dtype=torch.float32).unsqueeze(1).to(self.device))
-
                 states.append(state)
                 actions.append(action)
 
@@ -109,31 +116,40 @@ class Agent:
             advantage = returns - values
             advantage = self.normalize(advantage)
 
+            # random indices 
             b_inds = np.arange(states.size(0))
             for _ in range(args.epochs):
                 np.random.shuffle(b_inds)
                 for start in range(0, states.size(0), args.mini_batch):
+                    # if mini batch = 32, start = 0, 32, 64,....
                     end = start + args.mini_batch
                     mb_inds = b_inds[start:end]
 
+                    # new probablities and values
                     dist, value = model(states[mb_inds, :])
                     entropy = dist.entropy().mean()
                     new_log_probs = dist.log_prob(actions[mb_inds, :])
+                    # ratio of probablities
                     ratio = (new_log_probs - log_probs[mb_inds, :]).exp()
+                    # Policy loss
                     p_loss1 = ratio * advantage[mb_inds, :]
                     p_loss2 = torch.clamp(ratio, 1.0 - args.epsilon, 1.0 + args.epsilon) * advantage[mb_inds, :]
                     p_loss = - torch.min(p_loss1, p_loss2).mean()
+                    # actor loss
                     v_loss = (returns[mb_inds, :] - value).pow(2).mean()
-
+                    # total loss
                     loss = args.c1 * v_loss + p_loss - args.c2 * entropy
 
                     optimizer.zero_grad()
                     loss.backward()
                     optimizer.step()
+
+            # Calculate explained variance
             y_pred, y_true = values.cpu().numpy(), returns.cpu().numpy()
             var_y = np.var(y_true)
             explained_var = np.nan if var_y == 0 else 1 - np.var(y_true - y_pred) / var_y
 
+            # log the stats
             self.writer.add_scalar("losses/policy_loss", p_loss.item(), global_steps)
             self.writer.add_scalar("losses/value_loss", v_loss.item(), global_steps)
             self.writer.add_scalar("losses/total", loss.item(), global_steps)
@@ -156,6 +172,7 @@ class Agent:
 
     def play(self,env = None, model = None, human = False):
 
+        # if executed from the terminal
         if not env:
             env = gym.make(self.env_id, render = True)
             env = gym.wrappers.Monitor(env, "./videos", force = True)
@@ -165,16 +182,20 @@ class Agent:
             model.load_state_dict(torch.load(args.model))
         
         # if human:
-            # env.render()
+        #     env.render()
 
         state = env.reset()
         done= False
         total_reward = 0
         while not done:
+            # env.render()
+            # time.sleep(0.01)
             state = torch.FloatTensor(state).unsqueeze(0).to(device)
             with torch.no_grad():
                 dist, _ = model(state)
+            # Deterministic
             action = dist.mean.detach().cpu().numpy()[0]
+            # Stocastic
             # action = dist.sample().cpu().numpy()[0]
             next_state, reward, done, _ = env.step(action)
             state = next_state
@@ -191,18 +212,15 @@ if __name__ == "__main__":
     parser.add_argument("--env", help = "OpenAI gym environment", default = "HalfCheetahPyBulletEnv-v0", type = str)
     parser.add_argument("--learn", help = "Agent starts to learn",  action= 'store_true')
     parser.add_argument("--play", help = "Agent starts to play", action= 'store_true')
-    # parser.add_argument("-n_workers", help = "Number of environments", default = 8, type = int)
-    parser.add_argument("-n_workers", help = "Number of environments", default = 4, type = int)
+    parser.add_argument("-n_workers", help = "Number of environments", default = 8, type = int)
     parser.add_argument("-mini_batch", help = "Size of mini batch to sample", default = 64, type = int)
-    # parser.add_argument("-mini_batch", help = "Size of mini batch to sample", default = 32, type = int)
-    parser.add_argument("-lr", help = "Model learning rate", default = 1e-5, type = float)
+    parser.add_argument("-lr", help = "Model learning rate", default = 1e-4, type = float)
     parser.add_argument("-gamma", help = "return discount factor", default = 0.99, type = float)
     parser.add_argument("-lmda", help = "gae lambda", default = 0.95, type = float)
     parser.add_argument("-epochs", help = "number of updates", default = 10, type = int)
     parser.add_argument("-model", help = "pretrained model", type = str)
     parser.add_argument("-load", help = "load checkpoint", action = 'store_true')
-    # parser.add_argument("-ppo_steps", help = "Number of steps before update", default = 256, type = int)
-    parser.add_argument("-ppo_steps", help = "Number of steps before update", default = 2048, type = int)
+    parser.add_argument("-ppo_steps", help = "Number of steps before update", default = 256, type = int)
     parser.add_argument("-c1", help = "critic discount", default = 0.5, type = float)
     parser.add_argument("-c2", help = "entropy beta", default = 0.001, type = float)
     parser.add_argument("-epsilon", help = "entropy beta", default = 0.2, type = float)
@@ -214,5 +232,6 @@ if __name__ == "__main__":
 
     if (args.learn):
         agent.learn()
+
     if (args.play):
         agent.play(human = True)
