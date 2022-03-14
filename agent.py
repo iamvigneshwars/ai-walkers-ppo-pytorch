@@ -209,7 +209,8 @@ if __name__ == "__main__":
 
     parser = argparse.ArgumentParser()
     parser.add_argument("--exp", help = "Name of the experiment",type=str, default = "PPO" )
-    parser.add_argument("--env", help = "OpenAI gym environment", default = "HalfCheetahPyBulletEnv-v0", type = str)
+    parser.add_argument("--env", help = "OpenAI gym environment", default = "HalfCheetahPyBulletEnv-v0",
+            type = str, required = True)
     parser.add_argument("--learn", help = "Agent starts to learn",  action= 'store_true')
     parser.add_argument("--play", help = "Agent starts to play", action= 'store_true')
     parser.add_argument("-n_workers", help = "Number of environments", default = 8, type = int)
@@ -224,7 +225,6 @@ if __name__ == "__main__":
     parser.add_argument("-c1", help = "critic discount", default = 0.5, type = float)
     parser.add_argument("-c2", help = "entropy beta", default = 0.001, type = float)
     parser.add_argument("-epsilon", help = "entropy beta", default = 0.2, type = float)
-    
     args = parser.parse_args()
     
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
