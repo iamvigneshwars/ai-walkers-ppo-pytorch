@@ -31,3 +31,17 @@ To Play:
 python agent.py --play --env <ENV_ID> -model <MODEL PATH>
 
 ```
+
+| HumanoidBulletEnv-v0  | CheetahBulletEnv-v0 |
+| :-------------------------:|:-------------------------: |
+| ![](https://github.com/iamvigneshwars/ai-walkers-ppo-pytorch/blob/main/humanoid.gif) |  ![](https://github.com/iamvigneshwars/ai-walkers-ppo-pytorch/blob/main/cheetah.gif) |
+| HopperBulletEnv-v0  | AntBulletEnv-v0 |
+| ![](https://github.com/iamvigneshwars/ai-walkers-ppo-pytorch/blob/main/hopper.gif) |  ![](https://github.com/iamvigneshwars/ai-walkers-ppo-pytorch/blob/main/ant.gif) |
+
+
+## Requirements
+
+- [Python](https://www.python.org/downloads/) >= 3.7
+- [Pytorch](https://pytorch.org/) >= 1.3.1
+- [gym](https://gym.openai.com/)
+- [pybullet](https://pybullet.org/wordpress/)
