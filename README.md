@@ -2,6 +2,12 @@
 
 Pytorch implimentation of proximal policy optimization with clipped objective function and generalized advantage estimation. The model is trained on Humanoid, hopper, ant and halfcheetah pybullet environment. To run multiple environments in multiple threads, SubprocVecEnv class from stable baseline is used (file included).
 
+| HumanoidBulletEnv-v0  | CheetahBulletEnv-v0 |
+| :-------------------------:|:-------------------------: |
+| ![](https://github.com/iamvigneshwars/ai-walkers-ppo-pytorch/blob/main/humanoid.gif) |  ![](https://github.com/iamvigneshwars/ai-walkers-ppo-pytorch/blob/main/cheetah.gif) |
+| HopperBulletEnv-v0  | AntBulletEnv-v0 |
+| ![](https://github.com/iamvigneshwars/ai-walkers-ppo-pytorch/blob/main/hopper.gif) |  ![](https://github.com/iamvigneshwars/ai-walkers-ppo-pytorch/blob/main/ant.gif) |
+
 ## Usage
 Important command line arguments : <br>
 `--env` environment name (note : works only for continuous pybullet environments) <br>
@@ -31,13 +37,6 @@ To Play:
 python agent.py --play --env <ENV_ID> -model <MODEL PATH>
 
 ```
-
-| HumanoidBulletEnv-v0  | CheetahBulletEnv-v0 |
-| :-------------------------:|:-------------------------: |
-| ![](https://github.com/iamvigneshwars/ai-walkers-ppo-pytorch/blob/main/humanoid.gif) |  ![](https://github.com/iamvigneshwars/ai-walkers-ppo-pytorch/blob/main/cheetah.gif) |
-| HopperBulletEnv-v0  | AntBulletEnv-v0 |
-| ![](https://github.com/iamvigneshwars/ai-walkers-ppo-pytorch/blob/main/hopper.gif) |  ![](https://github.com/iamvigneshwars/ai-walkers-ppo-pytorch/blob/main/ant.gif) |
-
 
 ## Requirements
 
